@@ -1,0 +1,189 @@
+@using System.IO
+
+<div style="position:relative">
+    <div class="input-group">
+        <input class="form-control font-monospace"
+               placeholder="Click Browse to pick a folder…"
+               value="@Value"
+               @oninput="OnManualInput" />
+        <button class="btn btn-outline-secondary" type="button" @onclick="Toggle">
+            &#128193; Browse
+        </button>
+        @ChildContent
+    </div>
+
+    @if (_open)
+    {
+        <div class="border rounded shadow bg-white mt-1"
+             style="position:absolute;z-index:1050;width:100%;max-height:380px;overflow-y:auto">
+
+            @* breadcrumb / controls *@
+            <div class="d-flex align-items-center gap-2 px-3 py-2 border-bottom bg-light flex-wrap">
+                <button class="btn btn-sm btn-outline-secondary" type="button"
+                        @onclick="GoUp" disabled="@(_current?.Parent == null)">
+                    &#8593; Up
+                </button>
+                <span class="font-monospace small text-truncate flex-grow-1">
+                    @(_current?.FullName ?? "—")
+                </span>
+                <button class="btn btn-sm btn-success" type="button"
+                        @onclick="Confirm" disabled="@(_current == null)">
+                    Select
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" type="button"
+                        @onclick="() => _open = false">
+                    ✕
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(_browseError))
+            {
+                <div class="px-3 py-2 text-danger small">@_browseError</div>
+            }
+
+            @* directory rows *@
+            <ul class="list-unstyled mb-0">
+                @if (_entries.Count == 0 && string.IsNullOrEmpty(_browseError))
+                {
+                    <li class="px-3 py-2 text-muted small">No subdirectories</li>
+                }
+                @foreach (var dir in _entries)
+                {
+                    var dir_ = dir;
+                    <li @onclick="() => Navigate(dir_)"
+                        style="cursor:pointer;padding:.35rem .75rem"
+                        class="d-flex align-items-center folder-row">
+                        <span class="me-2">&#128193;</span>
+                        <span class="small flex-grow-1">@dir_.Name</span>
+                        @if (dir_.GetDirectories(".git", SearchOption.TopDirectoryOnly).Length > 0)
+                        {
+                            <span class="badge bg-warning text-dark ms-2">git</span>
+                        }
+                    </li>
+                }
+            </ul>
+
+            @* quick-jump roots *@
+            <div class="border-top px-3 py-2 bg-light d-flex gap-1 flex-wrap">
+                @foreach (var root in _roots)
+                {
+                    var root_ = root;
+                    <button class="btn btn-sm btn-outline-secondary font-monospace" type="button"
+                            @onclick="() => NavigateTo(root_)">
+                        @root_
+                    </button>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .folder-row:hover { background-color: #eef2ff; }
+</style>
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    bool _open;
+    DirectoryInfo? _current;
+    List<DirectoryInfo> _entries = [];
+    List<string> _roots = [];
+    string _browseError = "";
+
+    protected override void OnInitialized()
+    {
+        _roots = GetRoots();
+    }
+
+    void Toggle()
+    {
+        if (_open) { _open = false; return; }
+
+        var start = string.IsNullOrWhiteSpace(Value)
+            ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            : Value;
+
+        NavigateTo(start);
+        _open = true;
+    }
+
+    void NavigateTo(string path)
+    {
+        _browseError = "";
+        try
+        {
+            var dir = new DirectoryInfo(path);
+            if (!dir.Exists)
+            {
+                _browseError = $"Path not found: {path}";
+                return;
+            }
+            _current = dir;
+            RefreshEntries();
+        }
+        catch (Exception ex)
+        {
+            _browseError = ex.Message;
+        }
+    }
+
+    void Navigate(DirectoryInfo dir)
+    {
+        _browseError = "";
+        _current = dir;
+        RefreshEntries();
+    }
+
+    void GoUp()
+    {
+        if (_current?.Parent != null) Navigate(_current.Parent);
+    }
+
+    void RefreshEntries()
+    {
+        _browseError = "";
+        try
+        {
+            _entries = _current!
+                .GetDirectories()
+                .Where(d => !d.Name.StartsWith('.'))
+                .OrderBy(d => d.Name)
+                .ToList();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            _entries = [];
+            _browseError = "Access denied to this directory.";
+        }
+        catch (Exception ex)
+        {
+            _entries = [];
+            _browseError = ex.Message;
+        }
+    }
+
+    async Task Confirm()
+    {
+        if (_current == null) return;
+        _open = false;
+        Value = _current.FullName;
+        await ValueChanged.InvokeAsync(Value);
+    }
+
+    async Task OnManualInput(ChangeEventArgs e)
+    {
+        Value = e.Value?.ToString() ?? "";
+        await ValueChanged.InvokeAsync(Value);
+    }
+
+    static List<string> GetRoots()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (OperatingSystem.IsWindows())
+            return DriveInfo.GetDrives().Select(d => d.RootDirectory.FullName).ToList();
+        return ["/", home];
+    }
+}

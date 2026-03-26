@@ -1,0 +1,397 @@
+@page "/"
+@rendermode InteractiveServer
+@using Octopus.Services
+@inject GitService Git
+@inject RepoStore Store
+
+<PageTitle>Octopus</PageTitle>
+
+<div>
+    <h2 class="mb-4">Worktree Manager</h2>
+
+    @* ── Saved Repos ── *@
+    @if (_savedRepos.Count > 0)
+    {
+        <div class="mb-3 d-flex flex-wrap gap-2 align-items-center">
+            @foreach (var repo in _savedRepos)
+            {
+                var repo_ = repo;
+                <div class="card saved-repo-card @(_repoPath == repo.Path ? "border-primary" : "")"
+                     style="min-width:160px;max-width:240px">
+                    <div class="card-body py-2 px-3">
+                        @if (_renamingId == repo.Id)
+                        {
+                            <input class="form-control form-control-sm mb-1"
+                                   @bind="_renameValue"
+                                   @onkeydown="e => OnRenameKey(e, repo_)" />
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-xs btn-success" @onclick="() => CommitRename(repo_)">✓</button>
+                                <button class="btn btn-xs btn-outline-secondary" @onclick="CancelRename">✕</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="d-flex align-items-start justify-content-between gap-1">
+                                <button class="btn btn-link p-0 text-start text-decoration-none flex-grow-1"
+                                        style="font-size:.85rem;font-weight:500;line-height:1.3"
+                                        @onclick="() => SelectRepo(repo_)"
+                                        title="@repo.Path">
+                                    @repo.Name
+                                </button>
+                                <div class="d-flex gap-1 flex-shrink-0">
+                                    <button class="btn btn-xs btn-outline-secondary"
+                                            title="Rename"
+                                            @onclick="() => StartRename(repo_)">✎</button>
+                                    <button class="btn btn-xs btn-outline-danger"
+                                            title="Remove"
+                                            @onclick="() => RemoveSavedRepo(repo_)">✕</button>
+                                </div>
+                            </div>
+                            <div class="font-monospace text-muted text-truncate" style="font-size:.7rem"
+                                 title="@repo.Path">@repo.Path</div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @* ── Repo Path ── *@
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title mb-3">Repository</h5>
+            <FolderPicker @bind-Value="_repoPath">
+                <button class="btn btn-primary" @onclick="LoadWorktrees" disabled="@_loading">
+                    @if (_loading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1"></span>
+                    }
+                    Load
+                </button>
+            </FolderPicker>
+            @if (!string.IsNullOrEmpty(_globalError))
+            {
+                <div class="alert alert-danger mt-2 mb-0 py-2">@_globalError</div>
+            }
+        </div>
+    </div>
+
+    @if (_worktrees != null)
+    {
+        @* ── Worktree List ── *@
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">Worktrees (@_worktrees.Count)</span>
+                <button class="btn btn-sm btn-success" @onclick="() => _showCreateForm = !_showCreateForm">
+                    + New Worktree
+                </button>
+            </div>
+
+            @* ── Create Form ── *@
+            @if (_showCreateForm)
+            {
+                <div class="card-body border-bottom bg-light">
+                    <h6 class="mb-3">Create Worktree</h6>
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-4">
+                            <label class="form-label small mb-1">Worktree Directory Path</label>
+                            <input class="form-control form-control-sm font-monospace"
+                                   placeholder="/path/to/new-worktree"
+                                   @bind="_newPath" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small mb-1">Branch Name</label>
+                            @if (_createNewBranch)
+                            {
+                                <input class="form-control form-control-sm"
+                                       placeholder="feature/my-branch"
+                                       @bind="_newBranch" />
+                            }
+                            else
+                            {
+                                <select class="form-select form-select-sm" @bind="_newBranch">
+                                    <option value="">-- select branch --</option>
+                                    @foreach (var b in _branches)
+                                    {
+                                        <option value="@b">@b</option>
+                                    }
+                                </select>
+                            }
+                        </div>
+                        <div class="col-md-auto">
+                            <div class="form-check mt-1">
+                                <input class="form-check-input" type="checkbox" id="createNewBranch"
+                                       @bind="_createNewBranch" />
+                                <label class="form-check-label small" for="createNewBranch">
+                                    Create new branch
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-md-auto">
+                            <button class="btn btn-sm btn-success" @onclick="CreateWorktree" disabled="@_creating">
+                                @if (_creating)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                }
+                                Create
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary ms-1" @onclick="() => _showCreateForm = false">
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                    @if (!string.IsNullOrEmpty(_createError))
+                    {
+                        <div class="alert alert-danger mt-2 mb-0 py-2 small">@_createError</div>
+                    }
+                </div>
+            }
+
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Path</th>
+                            <th class="d-none d-sm-table-cell">Branch</th>
+                            <th class="d-none d-md-table-cell">Commit</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var wt in _worktrees)
+                        {
+                            var wt_ = wt;
+                            <tr>
+                                <td class="align-middle" style="max-width:0;width:40%">
+                                    <div class="font-monospace small text-truncate" title="@wt.Path">@wt.Path</div>
+                                    @if (wt.IsMainWorktree)
+                                    {
+                                        <span class="badge bg-secondary">main</span>
+                                    }
+                                    <span class="badge bg-primary d-sm-none ms-1">@(string.IsNullOrEmpty(wt.Branch) ? "?" : wt.Branch)</span>
+                                </td>
+                                <td class="align-middle d-none d-sm-table-cell">
+                                    <span class="badge bg-primary">@(string.IsNullOrEmpty(wt.Branch) ? "(unknown)" : wt.Branch)</span>
+                                </td>
+                                <td class="font-monospace small text-muted align-middle d-none d-md-table-cell">@wt.Commit</td>
+                                <td class="align-middle text-end">
+                                    <div class="d-flex flex-wrap justify-content-end gap-1">
+                                        <button class="btn btn-sm btn-outline-secondary"
+                                                @onclick="() => GitService.OpenInRider(wt_.Path)">
+                                            Open in Rider
+                                        </button>
+                                        @if (!wt.IsMainWorktree)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger"
+                                                    @onclick="() => ConfirmDelete(wt_)">
+                                                Delete
+                                            </button>
+                                        }
+                                        @if (!string.IsNullOrEmpty(wt.Branch) && wt.Branch != "(detached)" && wt.Branch != "(unknown)")
+                                        {
+                                            <button class="btn btn-sm btn-outline-primary"
+                                                    @onclick="() => PushWorktree(wt_)">
+                                                Push
+                                            </button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                            @if (_actionResults.TryGetValue(wt.Path, out var msg))
+                            {
+                                <tr class="table-borderless">
+                                    <td colspan="4" class="pt-0">
+                                        <div class="alert @(msg.Success ? "alert-success" : "alert-danger") py-1 px-2 mb-0 small">
+                                            @msg.Message
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+
+    @* ── Delete Confirmation Modal ── *@
+    @if (_pendingDelete != null)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.4)">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Delete Worktree</h5>
+                    </div>
+                    <div class="modal-body">
+                        <p>Remove worktree at:</p>
+                        <code>@_pendingDelete.Path</code>
+                        <p class="mt-2 mb-0 text-muted small">Branch: <strong>@_pendingDelete.Branch</strong></p>
+                        <div class="form-check mt-3">
+                            <input class="form-check-input" type="checkbox" id="forceDelete" @bind="_forceDelete" />
+                            <label class="form-check-label small" for="forceDelete">
+                                Force delete (even with uncommitted changes)
+                            </label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" @onclick="() => { _pendingDelete = null; _forceDelete = false; }">Cancel</button>
+                        <button class="btn btn-danger" @onclick="DeleteWorktree" disabled="@_deleting">
+                            @if (_deleting)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    string _repoPath = "";
+    List<WorktreeInfo>? _worktrees;
+    List<string> _branches = [];
+    string _globalError = "";
+    bool _loading;
+
+    List<SavedRepo> _savedRepos = [];
+    int _renamingId;
+    string _renameValue = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _savedRepos = await Store.GetAllAsync();
+    }
+
+    async Task SelectRepo(SavedRepo repo)
+    {
+        _repoPath = repo.Path;
+        await LoadWorktrees();
+    }
+
+    async Task RemoveSavedRepo(SavedRepo repo)
+    {
+        await Store.DeleteAsync(repo.Id);
+        _savedRepos = await Store.GetAllAsync();
+    }
+
+    void StartRename(SavedRepo repo)
+    {
+        _renamingId = repo.Id;
+        _renameValue = repo.Name;
+    }
+
+    void CancelRename()
+    {
+        _renamingId = 0;
+        _renameValue = "";
+    }
+
+    async Task CommitRename(SavedRepo repo)
+    {
+        if (!string.IsNullOrWhiteSpace(_renameValue))
+            await Store.RenameAsync(repo.Id, _renameValue.Trim());
+        _renamingId = 0;
+        _savedRepos = await Store.GetAllAsync();
+    }
+
+    async Task OnRenameKey(KeyboardEventArgs e, SavedRepo repo)
+    {
+        if (e.Key == "Enter") await CommitRename(repo);
+        else if (e.Key == "Escape") CancelRename();
+    }
+
+    bool _showCreateForm;
+    bool _createNewBranch = true;
+    string _newPath = "";
+    string _newBranch = "";
+    string _createError = "";
+    bool _creating;
+
+    WorktreeInfo? _pendingDelete;
+    bool _forceDelete;
+    bool _deleting;
+
+    Dictionary<string, (bool Success, string Message)> _actionResults = new();
+
+    async Task LoadWorktrees()
+    {
+        if (string.IsNullOrWhiteSpace(_repoPath)) return;
+        _loading = true;
+        _globalError = "";
+        _actionResults.Clear();
+
+        var (worktrees, error) = await Git.ListWorktreesAsync(_repoPath);
+        var (branches, _) = await Git.ListBranchesAsync(_repoPath);
+
+        _worktrees = string.IsNullOrEmpty(error) ? worktrees : null;
+        _globalError = error;
+        _branches = branches;
+        _loading = false;
+
+        if (_worktrees != null)
+        {
+            await Store.SaveAsync(_repoPath);
+            _savedRepos = await Store.GetAllAsync();
+        }
+    }
+
+    async Task CreateWorktree()
+    {
+        _createError = "";
+        if (string.IsNullOrWhiteSpace(_newPath) || string.IsNullOrWhiteSpace(_newBranch))
+        {
+            _createError = "Path and branch name are required.";
+            return;
+        }
+
+        _creating = true;
+        var result = await Git.AddWorktreeAsync(_repoPath, _newPath, _newBranch, _createNewBranch);
+        _creating = false;
+
+        if (result.Success)
+        {
+            _showCreateForm = false;
+            _newPath = _newBranch = "";
+            await LoadWorktrees();
+        }
+        else
+        {
+            _createError = result.Error;
+        }
+    }
+
+    void ConfirmDelete(WorktreeInfo wt)
+    {
+        _pendingDelete = wt;
+        _forceDelete = false;
+    }
+
+    async Task DeleteWorktree()
+    {
+        if (_pendingDelete == null) return;
+        _deleting = true;
+
+        var result = await Git.RemoveWorktreeAsync(_repoPath, _pendingDelete.Path, _forceDelete);
+        var path = _pendingDelete.Path;
+
+        _pendingDelete = null;
+        _forceDelete = false;
+        _deleting = false;
+
+        if (result.Success)
+            await LoadWorktrees();
+        else
+            _actionResults[path] = (false, result.Error);
+    }
+
+    async Task PushWorktree(WorktreeInfo wt)
+    {
+        _actionResults.Remove(wt.Path);
+        var result = await Git.PushAsync(_repoPath, wt.Branch);
+        _actionResults[wt.Path] = (result.Success, result.Success ? $"Pushed '{wt.Branch}' successfully." : result.Error);
+    }
+}
