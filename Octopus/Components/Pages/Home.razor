@@ -180,6 +180,10 @@
                                                 @onclick="() => GitService.OpenInRider(wt_.Path)">
                                             Open in Rider
                                         </button>
+                                        <button class="btn btn-sm btn-outline-secondary"
+                                                @onclick="() => GitService.OpenInVisualStudio(wt_.Path)">
+                                            Open in Visual Studio
+                                        </button>
                                         @if (!wt.IsMainWorktree)
                                         {
                                             <button class="btn btn-sm btn-outline-danger"

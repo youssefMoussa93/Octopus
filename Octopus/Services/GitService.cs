@@ -94,6 +94,18 @@ public class GitService
         Process.Start(psi);
     }
 
+    public static void OpenInVisualStudio(string path)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "open",
+            Arguments = $"-a \"Visual Studio\" \"{path}\"",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        Process.Start(psi);
+    }
+
     private static async Task<GitResult> RunGitAsync(string workingDir, string arguments)
     {
         var psi = new ProcessStartInfo("git", arguments)
